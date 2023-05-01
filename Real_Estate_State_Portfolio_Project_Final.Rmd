@@ -1,0 +1,491 @@
+---
+title: "Real Estate Pricing Data"
+author: "Kady Barnes"
+date: "05/01/2023"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, tidy.opts = list(width.cutoff = 70), tidy = TRUE)
+```
+
+# Real Estate Data
+
+My husband is in the military, so we tend to move often.  We are getting to the point where we will want to purchase a house, so I want to analyze housing data to see what type of relationships there are in housing prices and other factors like time on the market, time of year, and total listings.  While we may not have a lot of choice in where we go, there might be a better time to buy!
+
+```{r, message = FALSE}
+library(tidyverse)
+library(lubridate)
+library(semTools)
+library(ggplot2)
+library(gridExtra)
+
+Real_Estate_State <- read.csv(file = "Data/RDC_Inventory_Core_Metrics_State_History.csv",
+                              stringsAsFactors = TRUE)
+```
+
+## General Cleanup
+
+- Review Data Types
+- Review NAs
+- Review Variables
+
+### Determine if NAs should be removed
+```{r, message = FALSE}
+sum(is.na(Real_Estate_State))
+
+total.na <- Real_Estate_State %>%
+  group_by(Real_Estate_State$state) %>%
+  summarize(sum(is.na(Real_Estate_State$median_listing_price_mm)))
+total.na
+
+Real_Estate_Cleaned <- na.omit(Real_Estate_State)
+sum(is.na(Real_Estate_Cleaned))
+
+State.Count <- table(Real_Estate_State$state)
+State.Count
+
+State.Count.Cleaned <- table(Real_Estate_Cleaned$state)
+State.Count.Cleaned
+```
+#### Results:
+
+- N/A's: 15,463; many of these are from the same variables to include the mm and yy changes- they do not appear to be random.  Many of the categories have 613 NA's, which indicates they could potentially have been left out deliberately.  For example, the first column with NA's is 'median_listing_price_mm.'  Each state has 613 values missing.
+
+- We may consider using summary statistics and fill missing values with the average or median for that specific state.  However, as the missing data is relatively consistent, removing the NA's will not adversely affect one state more so than the other.  Therefore, we will remove the NA's from the data.
+
+- This removes a consistent amount from each state, confirming that removing the NA's will not throw off data for any one specific state.  The exception is the Marshall Islands that had one data, but now has zero.
+
+
+### Review Data Types
+```{r, message = FALSE}
+#lapply(Real_Estate_Cleaned, class)
+
+dates <- ym(Real_Estate_Cleaned$month_date_yyyymm)
+str(dates)
+class(dates)
+```
+#### Results: 
+- The only category that needs to be updated is the date formatting.
+
+### Review Variables
+
+- All variables appear normal with the exception of: Quality Flag. "Triggered (“1”) when data values are outside of their typical range. While rare, these figures should be reviewed before reporting."
+```{r, message = FALSE}
+
+#identify how many rows these affect:
+
+length(which(Real_Estate_Cleaned$quality_flag == 0))
+length(which(Real_Estate_Cleaned$quality_flag == 1))
+
+# There are 63 values that are listed as 1- meaning these are outside their typical range.  The data library does not state specifically what variable triggered the potential outlier.
+
+grouped_quality_flag <- Real_Estate_Cleaned %>%
+  group_by(state) %>%
+  summarize(quality_flag = length(which(quality_flag == 1))) %>% 
+  arrange(desc(quality_flag))
+grouped_quality_flag  
+```
+#### Results:
+- The area with the highest potential outliers ('1') is Washington, D.C. with 11.  Deleting these rows will reduce D.C. from 62 to 51, removing approximately 18% of its data.  Additionally, 6 rows from Utah will be removed, accounting for approximately 10% of its data.  At this time, I will not remove the quality flags that equal 1.  I will monitor the results to see if there are any trends in these two states specifically that may give us any insights.
+
+# Grouping Data to Begin Identifying Trends 
+
+- Are there any trends that can be seen with the data before I graph them?
+
+## States and Dates
+```{r}
+#Grouping by date and state
+
+Date.df.yr <- data.frame(date = c(format(dates, "%y")), 
+                      average.price = c(Real_Estate_Cleaned$average_listing_price))
+
+Date.df.month <- data.frame(date = c(format(dates, "%b")), 
+                      average.price = c(Real_Estate_Cleaned$average_listing_price))
+
+Date.df.yr %>% 
+    group_by(month = lubridate::floor_date(dates, "%y")) %>%
+    summarize(average_price = mean(x = average.price) [1])
+
+Date.df.month %>% 
+    group_by(month = lubridate::floor_date(dates, "%b")) %>%
+    summarize(average_price = mean(x = average.price) [1])
+```
+#### Results: 
+- Sales have continued to increase steadily over the past several years; I thought there would be a dip in 2020, but there wasn't.  There also does not seem to be large differences in average price and the month.
+
+#### Divide the states into 4 regions (determined by the Census Bureau) and the months into four seasons for a better picture when graphed and regressions performed.
+
+```{r}
+#Divided the states into 4 regions (determined by the Census Bureau) and divided the months into 4 seasons to allow a better visual picture.
+
+Real_Estate_Cleaned_Recode <- Real_Estate_Cleaned %>%
+  mutate(state = recode(.x = state, "connecticut" = "Northeast",
+                                    "maine" = "Northeast",
+                                    "massachusetts" = "Northeast",
+                                    "new hampshire" = "Northeast",
+                                    "rhode island" = "Northeast",
+                                    "vermont" = "Northeast",
+                                    "new jersey" = "Northeast",
+                                    "new york" = "Northeast",
+                                    "pennsylvania" = "Northeast")) %>%
+   mutate(state = recode(.x = state, "illinois" = "Midwest",
+                                      "indiana" = "Midwest",
+                                      "michigan" = "Midwest",
+                                      "ohio" = "Midwest",
+                                      "wisconsin" = "Midwest",
+                                      "iowa" = "Midwest",
+                                      "kansas" = "Midwest",
+                                      "minnesota" = "Midwest",
+                                      "missouri" = "Midwest",
+                                      "nebraska" = "Midwest",
+                                      "north dakota" = "Midwest",
+                                      "south dakota" = "Midwest")) %>%
+  mutate(state = recode(.x = state, "delaware" = "South",
+                                    "florida" = "South",
+                                    "georgia" = "South",
+                                    "maryland" = "South",
+                                    "north carolina" = "South",
+                                    "south carolina" = "South",
+                                    "virginia" = "South",
+                                    "district of columbia" = "South",
+                                    "west virginia" = "South",
+                                    "alabama" = "South",
+                                    "kentucky" = "South",
+                                    "mississippi" = "South",
+                                    "tennessee" = "South",
+                                    "arkansas" = "South",
+                                    "louisiana" = "South",
+                                    "oklahoma" = "South",
+                                    "texas" = "South")) %>%
+  mutate(state = recode(.x = state, "arizona" = "West",
+                                    "colorado" = "West",
+                                    "idaho" = "West",
+                                    "montana" = "West",
+                                    "nevada" = "West",
+                                    "new mexico" = "West",
+                                    "utah" = "West",
+                                    "wyoming" = "West",
+                                    "alaska" = "West",
+                                    "california" = "West",
+                                    "hawaii" = "West",
+                                    "oregon" = "West",
+                                    "washington" = "West")) %>%
+  mutate(state = recode(.x = state, "marshall islands" = "Other")) %>%
+  mutate(dates = as.factor(dates)) %>%
+  mutate(dates = recode_factor(.x = dates,
+                               `2022-12-01` = "Winter", `2021-12-01` = "Winter",
+                               `2020-12-01` = "Winter", `2019-12-01` = "Winter",
+                               `2018-12-01` = "Winter", `2017-12-01` = "Winter",
+                               `2016-12-01` = "Winter",
+                               `2022-01-01` = "Winter", `2021-01-01` = "Winter",
+                               `2020-01-01` = "Winter", `2019-01-01` = "Winter",
+                               `2018-01-01` = "Winter", `2017-01-01` = "Winter",
+                               `2016-01-01` = "Winter",
+                               `2022-02-01` = "Winter", `2021-02-01` = "Winter",
+                               `2020-02-01` = "Winter", `2019-02-01` = "Winter",
+                               `2018-02-01` = "Winter", `2017-02-01` = "Winter",
+                               `2016-02-01` = "Winter",
+                               `2022-03-01` = "Spring", `2021-03-01` = "Spring",
+                               `2020-03-01` = "Spring", `2019-03-01` = "Spring",
+                               `2018-03-01` = "Spring", `2017-03-01` = "Spring",
+                               `2016-03-01` = "Spring",
+                               `2022-04-01` = "Spring", `2021-04-01` = "Spring",
+                               `2020-04-01` = "Spring", `2019-04-01` = "Spring",
+                               `2018-04-01` = "Spring", `2017-04-01` = "Spring",
+                               `2016-04-01` = "Spring",
+                               `2022-05-01` = "Spring", `2021-05-01` = "Spring",
+                               `2020-05-01` = "Spring", `2019-05-01` = "Spring",
+                               `2018-05-01` = "Spring", `2017-05-01` = "Spring",
+                               `2016-05-01` = "Spring",
+                               `2022-06-01` = "Summer", `2021-06-01` = "Summer",
+                               `2020-06-01` = "Summer", `2019-06-01` = "Summer",
+                               `2018-06-01` = "Summer", `2017-06-01` = "Summer",
+                               `2016-06-01` = "Summer",
+                               `2022-07-01` = "Summer", `2021-07-01` = "Summer",
+                               `2020-07-01` = "Summer", `2019-07-01` = "Summer",
+                               `2018-07-01` = "Summer", `2017-07-01` = "Summer",
+                               `2016-07-01` = "Summer",
+                               `2022-08-01` = "Summer", `2021-08-01` = "Summer",
+                               `2020-08-01` = "Summer", `2019-08-01` = "Summer",
+                               `2018-08-01` = "Summer", `2017-08-01` = "Summer",
+                               `2016-08-01` = "Summer",
+                               `2022-09-01` = "Fall", `2021-09-01` = "Fall",
+                               `2020-09-01` = "Fall", `2019-09-01` = "Fall",
+                               `2018-09-01` = "Fall", `2017-09-01` = "Fall",
+                               `2016-09-01` = "Fall",
+                               `2022-10-01` = "Fall", `2021-10-01` = "Fall",
+                               `2020-10-01` = "Fall", `2019-10-01` = "Fall",
+                               `2018-10-01` = "Fall", `2017-10-01` = "Fall",
+                               `2016-10-01` = "Fall",
+                               `2022-11-01` = "Fall", `2021-11-01` = "Fall",
+                               `2020-11-01` = "Fall", `2019-11-01` = "Fall",
+                               `2018-11-01` = "Fall", `2017-11-01` = "Fall",
+                               `2016-11-01` = "Fall"))
+                               
+                               
+summary(Real_Estate_Cleaned_Recode$dates)
+summary(Real_Estate_Cleaned_Recode$state)
+```
+#### Results: 
+- We see that the Summer has the highest entries and the remaining seasons have relatively the lowest entries.  This does not really tell us much yet without comparing it do a different variable.  
+
+- This also does not tell us much without comparing it to another variable, but the South has highest value here.
+
+## Average Listing Price
+
+```{r}
+sort(tapply(Real_Estate_Cleaned$average_listing_price, Real_Estate_Cleaned$state, mean),
+     decreasing = TRUE)
+sort(tapply(Real_Estate_Cleaned$average_listing_price, Real_Estate_Cleaned$state, median),
+     decreasing = TRUE)
+
+#Grouped by region: 
+
+State.Prices <- Real_Estate_Cleaned_Recode %>%
+  group_by(state) %>%
+  summarize(average_price = mean(x= average_listing_price) [1])
+State.Prices
+
+#Breaking down by season instead of specific months:
+
+Season.Prices <- Real_Estate_Cleaned_Recode %>%
+  group_by(dates) %>%
+  summarize(average_price = mean(x= average_listing_price) [1])
+Season.Prices
+```
+#### Results:
+- Spring has the highest average price, with the lowest being Fall.  This is interesting as I would have expected that Winter would be the lowest due to the cold.  Although warmer climate regions like the West and South could be a contributing factor (selling a house in the fall or winter in these regions when it is not so hot).  Additionally, the West has the highest average price, while the Midwest has the least.
+
+## Median Days on Market
+```{r}
+#Grouped by state:
+
+sort(tapply(Real_Estate_Cleaned$median_days_on_market, Real_Estate_Cleaned$state, mean),
+     decreasing = TRUE)
+sort(tapply(Real_Estate_Cleaned$median_days_on_market, Real_Estate_Cleaned$state, median),
+     decreasing = TRUE)
+
+#Grouped by region: 
+
+State.Days <- Real_Estate_Cleaned_Recode %>%
+  group_by(state) %>%
+  summarize(median_days = mean(x= median_days_on_market) [1])
+State.Days
+
+#Grouped by season: 
+
+Season.Days <- Real_Estate_Cleaned_Recode %>%
+  group_by(dates) %>%
+  summarize(median_days = mean(x= median_days_on_market) [1])
+Season.Days
+```
+#### Results: 
+- #The median days on the market are relatively similar all around, with the South leading, and winter has the highest median days on the market.
+
+## New Listing Count
+
+```{r}
+#Grouped by state:
+
+sort(tapply(Real_Estate_Cleaned$new_listing_count, Real_Estate_Cleaned$state, mean),
+     decreasing = TRUE)
+sort(tapply(Real_Estate_Cleaned$new_listing_count, Real_Estate_Cleaned$state, median),
+     decreasing = TRUE)
+
+#Grouped by region:
+State.Listing <- Real_Estate_Cleaned_Recode %>%
+  group_by(state) %>%
+  summarize(new_listing = mean(x= new_listing_count) [1])
+State.Listing
+
+#Grouped by season: 
+
+Season.Listing <- Real_Estate_Cleaned_Recode %>%
+  group_by(dates) %>%
+  summarize(new_listing = mean(x= new_listing_count) [1])
+Season.Listing
+```
+
+#### Results:
+
+- The South has the most new listings, which makes adds more context as a contributing factor as to why from #3 that it has the longest median days on the market.  The Summer has the highest total listings and the Winter has the least new total listings.
+
+- Going back to the quality flag variable where D.C. stood out the most, we see that DC has the second lowest total listing count, but the sixth highest average listing price, and the lowest average days on the market.  While it makes sense that a smaller area would have less houses available and likely increase demand, this can be a factor that would cause the quality flag to rise. 
+
+
+# Graphing Relationships for Visual Representation
+
+## Date Versus Average Listing Price:
+
+```{r}
+Plot1 <- Date.df.yr %>%
+  ggplot(aes(y = average.price, x = date, fill = date)) +
+  geom_boxplot() + theme_minimal() + labs(x = "Year",
+                                          y = "Average Price") +
+  theme(legend.position = "none")
+
+
+Plot2 <- Date.df.month %>%
+  ggplot(aes(y = average.price, x = date, fill = date)) +
+  geom_boxplot() + theme_minimal() + labs(x = "Month",
+                                           y = "Average Price") +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = month.abb)
+
+gridExtra::grid.arrange(Plot1, Plot2)
+```
+
+## Season Versus Average Listing Price:
+
+```{r}
+options(scipen = 6)
+
+ggplot(Season.Prices, aes(dates, average_price, fill = average_price)) + 
+  geom_bar(stat = "identity", position = "dodge") +
+  coord_flip() + labs(x = "Season", y = "Average Price") +
+  ggtitle("Season Versus Average Price")
+```
+#### Results:
+- This shows us a general increase in the average price over the years, but (at least visually), not a large difference in average price and month and season.
+
+## Median List Price Versus Regions:
+```{r}
+Region.Prices <- Real_Estate_Cleaned_Recode %>%
+  group_by(state) %>%
+  summarize(median_price = mean(x= median_listing_price) [1])
+Region.Prices
+
+ggplot(Region.Prices, aes(state, median_price, fill = median_price)) + 
+  geom_bar(stat = "identity", position = "dodge") +
+  coord_flip() + labs(x = "Season", y = "Median Price") +
+  ggtitle("Region Versus Median Price")
+```
+#### Results: 
+- The West and Northeast have the highest average house prices with the Midwest coming in at the lowest average house prices.
+
+## Median List Price Versus Seasons:
+```{r}
+Season.Median.Prices <- Real_Estate_Cleaned_Recode %>%
+  group_by(dates) %>%
+  summarize(median_price = mean(x= median_listing_price) [1])
+Season.Median.Prices
+
+ggplot(Season.Median.Prices, aes(dates, median_price, fill = median_price)) + 
+  geom_bar(stat = "identity", position = "dodge") +
+  coord_flip() + labs(x = "Season", y = "Median Price") +
+  ggtitle("Season Versus Median Price")
+```
+#### Results: 
+- The West and Northeast have the highest average house prices with the Midwest coming in at the lowest average house prices.
+
+## Average Listing Price Versus New Listing Count:
+```{r}
+AvgPrice.NewList <- Real_Estate_Cleaned %>%
+  ggplot(aes(x = average_listing_price, 
+            y = new_listing_count)) + 
+            geom_point() + stat_smooth(method = "lm") +
+            labs(x = "Average Listing Price", 
+                 y = "New Listing Count") + ggtitle("New Listing Versus Average Listing Price")
+AvgPrice.NewList
+```
+#### Results: 
+- This graph shows a positive relationship between the two variables; as the average listing price increases, the new listing count increases as well; however, there are many outliers that could affect this relationship when looking at it statistically.
+
+# Regression Testing
+
+I will test to see if there are any statistically significant variables with the Median List Price and the seasons and regions, as I believe these may have a large impact on the list price.
+
+### Median List Price with Regions and Seasons
+
+#### I will test the differences in the the mean of the median listing price across seasons and region.
+
+Hypothesis 1: 
+
+- H0: The mean of the median list price is the same across all regions
+
+- Ha: The mean of the median list price is not the same across all regions 
+
+Hypothesis 2:
+
+- H0: The mean of the median list price is the same across all seasons 
+
+- Ha: The mean of the median list price is not the same across all seasons
+
+Let Alpha = .05
+
+```{r}
+Price2Way <- aov(median_listing_price ~ state + dates, data = Real_Estate_Cleaned_Recode)
+summary(Price2Way)
+
+#P-Value for the four regions is < 2e-16
+
+#P-Value for the four seasons is 1.27e-08
+
+#The ANOVA results indicate there is a difference in both the mean of the median listing price compared to seasons and regions.  Therefore, we reject the null hypotheses on both. I will conduct post-hoc tests to review further.
+
+#Bonferroni Test for Hypothesis 1 (Regions): 
+
+pairwise.t.test(Real_Estate_Cleaned_Recode$median_listing_price,
+                Real_Estate_Cleaned_Recode$state, p.adj = "bonf")
+
+#The Bonferroni test shows us there is a statistically significant difference between the means of all regions and the median listing price.
+
+#Tukey Test For Hypothesis 1 (Regions):
+
+State1Way <- aov(median_listing_price ~ state, data = Real_Estate_Cleaned_Recode)
+
+TukeyHSD(State1Way)
+
+#The Tukey test shows us that the West has the highest mean due its diff results with the other regions.  The second highest mean is Northeast, followed by the South, with the Midwest having the lowest mean.  
+
+#Bonferroni Test for Hypothesis 2 (Dates): 
+
+pairwise.t.test(Real_Estate_Cleaned_Recode$median_listing_price,
+                Real_Estate_Cleaned_Recode$dates, p.adj = "bonf")
+
+#The Bonferroni test shows us a statistically significant difference in mean between Spring and Winter, Summer and Winter, Fall and Spring, and Fall and Summer.  This is interesting because this is quite a bit different than the statistically significant differences in the average list price.  
+
+Date1Way <- aov(median_listing_price ~ dates, data = Real_Estate_Cleaned_Recode)
+
+TukeyHSD(Date1Way)
+
+#The Tukey Test shows us a difference in means with the median list price that we didn't see with the average list price test previously done.  This shows us that statistically significant difference in means is: Spring-Winter (with Spring being larger), Summer-Winter (With Summer being larger), Fall-Spring (with Spring being larger), and Fall-Summer, (with Summer being larger).  Therefore, Spring has the largest average median listing price, with the Summer being the second largest.
+```
+
+#### Result: There were more statistically significant differences in means between the seasons than I thought.  I initially only thought that the Summer would have statistically significant means due to the results of the average listing price tests, but we also had several other seasonal differences.  Additionally, in regards to the regions, there was a statistically significant difference in all the regions, with the West being the highest, where I was correct in my prediction.
+
+## Correlation Testing
+
+After completing the multiple regression, I wanted to see through a correlation test, how some of the numerical variables may affect the average listing price.
+
+```{r}
+
+cor.test(Real_Estate_Cleaned_Recode$active_listing_count,
+         Real_Estate_Cleaned_Recode$average_listing_price)
+
+cor.test(Real_Estate_Cleaned_Recode$new_listing_count,
+         Real_Estate_Cleaned_Recode$average_listing_price)
+
+cor.test(Real_Estate_Cleaned_Recode$pending_ratio,
+         Real_Estate_Cleaned_Recode$average_listing_price)
+
+cor.test(Real_Estate_Cleaned_Recode$median_days_on_market,
+         Real_Estate_Cleaned_Recode$average_listing_price)
+
+#The median days on the market seem to be most correlated with the average listing price.
+```
+
+
+# Final Results
+
+- The date and location seemed to be large predictors of price.  Regarding dates, the confounding variables can be the variability in the climate.  A listing in Florida in the Winter will likely be a lot different than a listing in the Midwest at the time same time due to extremely cold temperatures.  Additionally, regarding regions, a factor that should be considered is the population density.  More people located in an area equates to higher demand for housing, which increases the the housing price.  An example of this is Washington D.C.; there seemed several outliers that flagged the quality flag indicator, but this is a small area that is densely populated; with this comes a higher demand for houses, thus allowing sellers to list homes for higher prices.
+
+- Another factor that could affect the results is an expensive area that can affect the whole state.  As an example, in New York, the most populous city is New York City (also the most populated city in the US).  New York state's average listing price is the third highest in the country, yet travel upstate, and the housing prices will be less due to less demand and less job opportunities.
+
+# What does this mean for our potential housing purchase at our next duty station?
+
+- The most likely moves will either be to California, Florida, Virginia, or Maryland.  These are different geographic areas, and from the data, I know that California will be the highest price among the four states.  Regardless of where we buy, the from both the visual graphs and the regression testing is that purchasing houses in the Spring will be the highest.  While we usually move around the Spring and Summer, if we can hold out to a later season, we may find a house slightly cheaper in the Fall or Winter.  Although, it is important to note that the only statistically significant price difference in seasons was between the Spring and Fall, so the Fall may be the way to go when looking to purchase a house.
+
